@@ -1,1 +1,1 @@
-# Bachelor-Thesis---Hide-and-Seek-Games-
+# Bachelor Thesis - 'Hide and Seek Games'
