@@ -1,14 +1,10 @@
-# noqa
 """
 # Simple Tag
-
 ```{figure} mpe_simple_tag.gif
 :width: 140px
 :name: simple_tag
 ```
-
 This environment is part of the <a href='..'>MPE environments</a>. Please read that page first for general information.
-
 | Import             | `from pettingzoo.mpe import simple_tag_v2`                 |
 |--------------------|------------------------------------------------------------|
 | Actions            | Discrete/Continuous                                        |
@@ -22,13 +18,9 @@ This environment is part of the <a href='..'>MPE environments</a>. Please read t
 | Observation Values | (-inf,inf)                                                 |
 | State Shape        | (62,)                                                      |
 | State Values       | (-inf,inf)                                                 |
-
-
 This is a predator-prey environment. Good agents (green) are faster and receive a negative reward for being hit by adversaries (red) (-10 for each collision). Adversaries are slower and are rewarded for hitting good agents (+10 for each collision). Obstacles (large black circles) block the way. By
 default, there is 1 good agent, 3 adversaries and 2 obstacles.
-
 So that good agents don't run to infinity, they are also penalized for exiting the area by the following function:
-
 ``` python
 def bound(x):
       if x < 0.9:
@@ -37,29 +29,17 @@ def bound(x):
           return (x - 0.9) * 10
       return min(np.exp(2 * x - 2), 10)
 ```
-
 Agent and adversary observations: `[self_vel, self_pos, landmark_rel_positions, other_agent_rel_positions, other_agent_velocities]`
-
 Agent and adversary action space: `[no_action, move_left, move_right, move_down, move_up]`
-
 ### Arguments
-
 ``` python
 simple_tag_v2.env(num_good=1, num_adversaries=3, num_obstacles=2, max_cycles=25, continuous_actions=False)
 ```
-
-
-
 `num_good`:  number of good agents
-
 `num_adversaries`:  number of adversaries
-
 `num_obstacles`:  number of obstacles
-
 `max_cycles`:  number of frames (a step for each agent) until game terminates
-
 `continuous_actions`: Whether agent action spaces are discrete(default) or continuous
-
 """
 
 import numpy as np
@@ -108,6 +88,10 @@ parallel_env = parallel_wrapper_fn(env)
 
 
 class Scenario(BaseScenario):
+    last_distance = 0
+    agent_caught = False
+    agent_bounds = False
+    adversary_bounds = False
     def make_world(self, num_good=1, num_adversaries=3, num_obstacles=2):
         world = World()
         # set any world properties first
@@ -125,15 +109,15 @@ class Scenario(BaseScenario):
             agent.name = f"{base_name}_{base_index}"
             agent.collide = True
             agent.silent = True
-            agent.size = 0.05 if agent.adversary else 0.05
-            agent.accel = 4.0 if agent.adversary else 4.0
-            agent.max_speed = 1.3 if agent.adversary else 1.3
+            agent.size = 0.1 if agent.adversary else 0.1
+            agent.accel = 1.5 if agent.adversary else 1.5
+            agent.max_speed = 1.5 if agent.adversary else 1.5
         # add landmarks
         world.landmarks = [Landmark() for i in range(num_landmarks)]
         for i, landmark in enumerate(world.landmarks):
             landmark.name = "landmark %d" % i
             landmark.collide = True
-            landmark.movable = False
+            landmark.movable = True
             landmark.size = 0.2
             landmark.boundary = False
         return world
@@ -196,54 +180,85 @@ class Scenario(BaseScenario):
     def agent_reward(self, agent, world):
         # Agents are negatively rewarded if caught by adversaries
         rew = 0
-        shape = False
+        agents = self.good_agents(world)
         adversaries = self.adversaries(world)
-        if (
-            shape
-        ):  # reward can optionally be shaped (increased reward for increased distance from adversary)
-            for adv in adversaries:
-                rew += np.sqrt(
-                    np.sum(np.square(agent.state.p_pos - adv.state.p_pos))
-                )
+        
+        self.agent_caught = False
+        self.agent_bounds = False
+        self.adversary_bounds = False
+            
+        current_distance = self.calc_distance(world)
+
         if agent.collide:
-            for a in adversaries:
-                if self.is_collision(a, agent):
-                    rew -= 10
+            for ag in agents:
+                for adv in adversaries:
+                    if self.is_collision(ag, adv):
+                        self.agent_caught = True
+                        rew -= 10
+                    # adversaries colliding with each other
+                    for adv2 in adversaries:
+                        if (self.is_collision(adv, adv2) and not(adv.name == adv2.name)):
+                            self.agent_caught = True
+                            rew -= 10
+                            #print("catch")
+            
+            
+                        elif (abs(ag.state.p_pos[0]) >= 1.0 or (abs(ag.state.p_pos[1])) >= 1.0):
+                            rew -= 10
+                            self.agent_bounds = True
+                            #print("agbounds")
+                            
+                        else:
+                            rew += current_distance - self.last_distance
 
-        # agents are penalized for exiting the screen, so that they can be caught by the adversaries
-        def bound(x):
-            if x < 0.9:
-                return 0
-            if x < 1.0:
-                return (x - 0.9) * 10
-            return 10
-
-        for p in range(world.dim_p):
-            x = abs(agent.state.p_pos[p])
-            rew -= bound(x)
+        #self.last_distance = current_distance                
 
         return rew
 
     def adversary_reward(self, agent, world):
         # Adversaries are rewarded for collisions with agents
         rew = 0
-        shape = False
         agents = self.good_agents(world)
         adversaries = self.adversaries(world)
-        if (
-            shape
-        ):  # reward can optionally be shaped (decreased reward for increased distance from agents)
-            for adv in adversaries:
-                rew -= min(
-                    np.sqrt(np.sum(np.square(a.state.p_pos - adv.state.p_pos)))
-                    for a in agents
-                )
+        
+        self.agent_caught = False
+        self.agent_bounds = False
+        self.adversary_bounds = False
+        
+        #print("last: ", self.last_distance)    
+        current_distance = self.calc_distance(world)
+        #print("current: ", current_distance)
+            
+
         if agent.collide:
             for ag in agents:
                 for adv in adversaries:
                     if self.is_collision(ag, adv):
                         rew += 10
+                        self.agent_caught = True
+            
+            
+                    elif (abs(adv.state.p_pos[0]) >= 1.0 or (abs(adv.state.p_pos[1])) >= 1.0):
+                        #print(adv.state.p_pos[0], adv.state.p_pos[1])
+                        rew -= 10
+                        self.adversary_bounds = True
+                        #print("advbounds")
+                        
+                    else:
+                        rew += self.last_distance - current_distance                                    
+                        
+        #self.last_distance = current_distance                
+                        
         return rew
+    
+    
+    # calculate the distance between agent and closest adversary
+    def calc_distance(self, world):
+        for adv in self.adversaries(world):
+            delta_pos = min(adv.state.p_pos - a.state.p_pos for a in self.good_agents(world))
+            distance = np.sqrt(np.sum(np.square(delta_pos)))
+            return distance
+        
 
     def observation(self, agent, world):
         # get positions of all entities in this agent's reference frame

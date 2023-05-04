@@ -183,8 +183,17 @@ class SimpleEnv(AECEnv):
         if self.local_ratio is not None:
             global_reward = float(self.scenario.global_reward(self.world))
 
+
+        end_episode = False
         for agent in self.world.agents:
             agent_reward = float(self.scenario.reward(agent, self.world))
+            #print(agent.name, agent_reward)
+
+            
+            # end episode early if collision or out of bounds
+            if self.scenario.agent_caught or self.scenario.agent_bounds or self.scenario.adversary_bounds:
+                end_episode = True                
+                
             if self.local_ratio is not None:
                 reward = (
                     global_reward * (1 - self.local_ratio)
@@ -194,6 +203,12 @@ class SimpleEnv(AECEnv):
                 reward = agent_reward
 
             self.rewards[agent.name] = reward
+            
+        self.scenario.last_distance = self.scenario.calc_distance(self.world)
+        
+        if end_episode:
+            self.terminations = dict.fromkeys(self.terminations, True)
+            
 
     # set env action for a particular agent
     def _set_action(self, action, agent, action_space, time=None):
